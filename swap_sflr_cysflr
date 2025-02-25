@@ -1,0 +1,139 @@
+/* 0. calculate-io */ 
+using-words-from 0xFe2411CDa193D9E4e83A5c234C7Fd320101883aC
+epoch:call<2>(),
+io: call<3>(epoch),
+epoch-max-output: call<4>(epoch io),
+other-total-out
+_
+other-vwaio: call<5>(),
+max-output: max(
+  epoch-max-output
+  every(
+    if(call<6>() 1 1)
+    mul(other-total-out other-vwaio))),
+_: io,
+:call<7>(io);
+
+/* 1. handle-io */ 
+min-trade-amount: mul(2000 0.9),
+:ensure(
+  greater-than-or-equal-to(
+    if(call<6>() output-vault-decrease() input-vault-increase())
+    min-trade-amount)
+  "Min trade amount."),
+:call<8>();
+
+/* 2. get-epoch */ 
+last-time _: call<9>(),
+duration: sub(now() last-time),
+epochs: div(duration 1800);
+
+/* 3. io-for-epoch */ 
+epoch:,
+last-io: call<9>(),
+this-vwaio
+other-vwaio: call<5>(),
+cost-basis-io: mul(any(this-vwaio inv(any(other-vwaio max-value()))) 1.01),
+max-next-trade: mul(max(cost-basis-io last-io) 1.05),
+baseline: any(cost-basis-io last-io),
+variable-component: sub(max-next-trade baseline),
+decay: call<10>(epoch),
+above-baseline: mul(variable-component decay),
+_: add(baseline above-baseline);
+
+/* 4. amount-for-epoch */ 
+epoch io:,
+decay: call<10>(epoch),
+shy-decay: every(greater-than(epoch 0.05) decay),
+variable-component: sub(20000 2000),
+base-amount: add(2000 mul(variable-component shy-decay)),
+_: if(call<6>() base-amount mul(base-amount inv(io)));
+
+/* 5. get-cost-basis-io-ratio */ 
+this-total-out-key: hash(order-hash() input-token() output-token()),
+  this-vwaio-key: hash(this-total-out-key "cost-basis-io-ratio"),
+  other-total-out-key: hash(order-hash() output-token() input-token()),
+  other-vwaio-key: hash(other-total-out-key "cost-basis-io-ratio"),
+
+  this-total-out: get(this-total-out-key),
+  other-total-out: get(other-total-out-key),
+
+  this-vwaio: get(this-vwaio-key),
+  other-vwaio: get(other-vwaio-key);
+
+/* 6. amount-is-output */ 
+_: equal-to(0x12e605bc104e93b45e1ad99f9e555f659051c2bb output-token());
+
+/* 7. set-last-trade */ 
+last-io:,
+:set(hash(order-hash() "last-trade-time") now()),
+:set(hash(order-hash() "last-trade-io") last-io),
+:set(hash(order-hash() "last-trade-output-token") output-token());
+
+/* 8. set-cost-basis-io-ratio */ 
+/* first reduce outstanding inventory */
+  this-total-out-key
+  this-vwaio-key
+  other-total-out-key
+  other-vwaio-key
+  this-total-out
+  other-total-out
+  this-vwaio
+  other-vwaio: call<5>(),
+
+  other-reduction-out: min(other-total-out input-vault-increase()),
+  reduced-other-total-out: sub(other-total-out other-reduction-out),
+
+  :set(other-total-out-key reduced-other-total-out),
+  :set(other-vwaio-key every(reduced-other-total-out other-vwaio)),
+
+  /* then increase our inventory */
+  this-total-in: mul(this-total-out this-vwaio),
+  this-remaining-in: sub(input-vault-increase() other-reduction-out),
+  this-new-in: add(this-total-in this-remaining-in),
+  this-remaining-out: div(this-remaining-in calculated-io-ratio()),
+  this-new-out: add(this-total-out this-remaining-out),
+  this-new-vwaio: every(this-new-out div(this-new-in any(this-new-out max-value()))),
+  cap-out: if(call<6>() 1e50 div(1e50 any(this-new-vwaio calculated-io-ratio()))),
+  capped-out: min(this-new-out cap-out),
+
+  :set(this-total-out-key capped-out),
+  :set(this-vwaio-key this-new-vwaio);
+
+/* 9. get-last-trade */ 
+stored-last-io:get(hash(order-hash() "last-trade-io")),
+stored-last-output-token:get(hash(order-hash() "last-trade-output-token")),
+last-time:get(hash(order-hash() "last-trade-time")),
+_: if(equal-to(stored-last-output-token output-token()) stored-last-io inv(stored-last-io));
+
+/* 10. halflife */ 
+epoch:,
+/**
+ * Shrinking the multiplier like this
+ * then applying it 10 times allows for
+ * better precision when max-io-ratio
+ * is very large, e.g. ~1e10 or ~1e20+
+ *
+ * This works because power loses
+ * precision on base 0.5 when the
+ * exponent is large and can even go
+ * to 0 while the io-ratio is still
+ * large. Better to keep the multiplier
+ * higher precision and drop the io-ratio
+ * smoothly for as long as we can.
+ */
+multiplier:
+  power(0.5 div(epoch 10)),
+val:
+  mul(
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+    multiplier
+  );
